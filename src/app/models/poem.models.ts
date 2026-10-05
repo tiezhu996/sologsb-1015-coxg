@@ -1,12 +1,39 @@
 export type Tone = '平' | '仄' | '中' | '?';
 export type MarkTone = '平' | '仄' | '中';
 
+export interface EvidenceEntry {
+  id: string;
+  title: string;
+  edition: string;
+  excerpt: string;
+  status: 'active' | 'deprecated';
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EvidenceSnapshot {
+  title: string;
+  edition: string;
+  excerpt: string;
+  revision: number;
+  capturedAt: string;
+}
+
+export interface EvidenceRef {
+  entryId: string;
+  confirmed: boolean;
+  snapshot: EvidenceSnapshot;
+  citedAt: string;
+}
+
 export interface CharacterMark {
   tone: MarkTone | '?';
   rhyme: string;
   pauseAfter: boolean;
   basis: string;
   note: string;
+  evidenceRefs?: EvidenceRef[];
 }
 
 export interface PoemVersion {
@@ -32,6 +59,7 @@ export interface PoemWorkspace {
   templateId: string;
   versions: PoemVersion[];
   activeVersionId: string;
+  evidenceLedger: EvidenceEntry[];
   updatedAt: string;
 }
 

@@ -168,6 +168,51 @@
               [ngModel]="cell.mark.basis"
               (ngModelChange)="updateSource($event)"
             ></textarea>
+            <label class="field-label">台账引用</label>
+            @if ((cell.mark.evidenceRefs ?? []).length) {
+              <div class="evidence-ref-list">
+                @for (ref of cell.mark.evidenceRefs ?? []; track ref.entryId) {
+                  @let resolved = store.resolveEvidence(ref);
+                  <article class="evidence-ref" [class.is-deprecated]="resolved.deprecated">
+                    <div class="evidence-ref-head">
+                      <strong>{{ resolved.title }}</strong>
+                      <span>{{ resolved.edition }}</span>
+                    </div>
+                    <div class="evidence-ref-tags">
+                      @if (ref.confirmed) {
+                        <nz-tag nzColor="green">已确认 · 快照第 {{ resolved.revision }} 版</nz-tag>
+                      } @else {
+                        <nz-tag nzColor="gold">未确认 · 跟随当前第 {{ resolved.revision }} 版</nz-tag>
+                      }
+                      @if (resolved.deprecated) { <nz-tag nzColor="red">条目已停用</nz-tag> }
+                      @if (resolved.stale) { <nz-tag nzColor="orange">台账已改版</nz-tag> }
+                      @if (resolved.missing) { <nz-tag nzColor="red">条目缺失</nz-tag> }
+                    </div>
+                    <p class="evidence-excerpt">{{ resolved.excerpt }}</p>
+                    <div class="evidence-ref-actions">
+                      @if (!ref.confirmed && !resolved.missing) {
+                        <button nz-button nzSize="small" nzType="primary" (click)="store.confirmEvidence(ref.entryId)">确认引用</button>
+                      }
+                      <button nz-button nzSize="small" nzType="text" nzDanger (click)="store.removeEvidence(ref.entryId)">移除</button>
+                    </div>
+                  </article>
+                }
+              </div>
+            } @else {
+              <p class="evidence-hint">尚未引用台账条目；上方手写依据保留原文。</p>
+            }
+            <div class="evidence-cite-row">
+              <nz-select nzPlaceHolder="从台账选择条目" [(ngModel)]="pendingEvidenceId">
+                @for (entry of store.workspace().evidenceLedger; track entry.id) {
+                  <nz-option
+                    [nzValue]="entry.id"
+                    [nzLabel]="entry.title + '｜' + entry.edition + (entry.status === 'deprecated' ? '（已停用）' : '')"
+                    [nzDisabled]="entry.status === 'deprecated'"
+                  ></nz-option>
+                }
+              </nz-select>
+              <button nz-button [disabled]="!pendingEvidenceId" (click)="citePending()">引用</button>
+            </div>
             <label class="field-label">批注</label>
             <textarea
               nz-input
@@ -182,6 +227,66 @@
             <nz-empty nzNotFoundContent="请选择某个字"></nz-empty>
           }
         </aside>
+      </div>
+    </nz-tab>
+
+    <nz-tab nzTitle="依据台账">
+      <div class="ledger-layout">
+        <section class="surface ledger-form-panel">
+          <div class="section-title">
+            <div>
+              <span class="overline">EVIDENCE LEDGER</span>
+              <h2>{{ editingEvidenceId ? '改版条目' : '登记条目' }}</h2>
+            </div>
+            @if (editingEvidenceId) { <nz-tag nzColor="gold">改版后已确认引用仍按快照显示</nz-tag> }
+          </div>
+          <div class="ledger-form">
+            <label class="field-label">称谓</label>
+            <input nz-input placeholder="如 《平水韵》、宋蜀刻本《孟浩然集》" [(ngModel)]="evidenceDraft.title" />
+            <label class="field-label">版本卷页</label>
+            <input nz-input placeholder="如 上声十七筱 / 卷一叶三" [(ngModel)]="evidenceDraft.edition" />
+            <label class="field-label">摘录</label>
+            <textarea nz-input rows="4" placeholder="逐字摘录韵书、刻本原文" [(ngModel)]="evidenceDraft.excerpt"></textarea>
+            <div class="ledger-form-actions">
+              <button nz-button nzType="primary" (click)="saveEvidence()">{{ editingEvidenceId ? '保存改版' : '登记入账' }}</button>
+              @if (editingEvidenceId) { <button nz-button (click)="resetEvidenceForm()">取消</button> }
+            </div>
+          </div>
+        </section>
+        <section class="surface ledger-list-panel">
+          <div class="section-title">
+            <div>
+              <span class="overline">REGISTERED</span>
+              <h2>已登记 {{ store.workspace().evidenceLedger.length }} 条</h2>
+            </div>
+          </div>
+          @if (store.workspace().evidenceLedger.length === 0) {
+            <nz-empty nzNotFoundContent="台账为空，先登记一条依据"></nz-empty>
+          }
+          <div class="ledger-list">
+            @for (entry of store.workspace().evidenceLedger; track entry.id) {
+              @let usage = store.evidenceUsage().get(entry.id);
+              <article class="ledger-card" [class.is-deprecated]="entry.status === 'deprecated'">
+                <div class="ledger-card-head">
+                  <strong>{{ entry.title }}</strong>
+                  <nz-tag [nzColor]="entry.status === 'deprecated' ? 'red' : 'green'">{{ entry.status === 'deprecated' ? '已停用' : '在用' }}</nz-tag>
+                  <nz-tag>第 {{ entry.revision }} 版</nz-tag>
+                </div>
+                <p class="ledger-edition">{{ entry.edition }}</p>
+                <p class="ledger-excerpt">{{ entry.excerpt }}</p>
+                <div class="ledger-card-foot">
+                  <small>被引用 {{ usage?.total ?? 0 }} 处（已确认 {{ usage?.confirmed ?? 0 }}）· 更新于 {{ entry.updatedAt | date: 'yyyy-MM-dd HH:mm' }}</small>
+                  <span class="ledger-actions">
+                    <button nz-button nzSize="small" nzType="text" (click)="editEvidence(entry)">改版</button>
+                    <button nz-button nzSize="small" nzType="text" [nzDanger]="entry.status === 'active'" (click)="store.toggleEvidenceStatus(entry.id)">
+                      {{ entry.status === 'active' ? '停用' : '恢复' }}
+                    </button>
+                  </span>
+                </div>
+              </article>
+            }
+          </div>
+        </section>
       </div>
     </nz-tab>
 

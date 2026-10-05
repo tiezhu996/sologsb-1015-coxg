@@ -162,6 +162,35 @@ kbd { display: inline-grid; min-width: 21px; height: 21px; padding: 0 5px; place
 .tone-buttons button { padding-inline: 4px; }
 .switch-line { display: flex; align-items: center; gap: 8px; color: #747068; font-size: 11px; }
 
+.evidence-hint { margin: 0 0 8px; color: #98937f; font-size: 10px; }
+.evidence-ref-list { display: grid; gap: 7px; }
+.evidence-ref { padding: 9px 10px; border: 1px solid #e0dbcf; border-radius: 8px; background: #fbfaf5; }
+.evidence-ref.is-deprecated { border-style: dashed; background: #f6f4ee; }
+.evidence-ref-head { display: flex; align-items: baseline; gap: 7px; }
+.evidence-ref-head strong { font-size: 12px; }
+.evidence-ref-head span { color: #7d786c; font-size: 10px; }
+.evidence-ref-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.evidence-excerpt { margin-top: 6px; color: #6a655a; font: 11px/1.7 "Songti SC", "STSong", serif; }
+.evidence-ref-actions { display: flex; justify-content: flex-end; gap: 4px; margin-top: 4px; }
+.evidence-cite-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 8px; }
+
+.ledger-layout { display: grid; grid-template-columns: 340px minmax(480px, 1fr); gap: 12px; align-items: start; }
+.ledger-form-panel { position: sticky; top: 12px; padding-bottom: 16px; }
+.ledger-form { padding: 0 16px; }
+.ledger-form-actions { display: flex; gap: 8px; margin-top: 14px; }
+.ledger-list-panel { padding-bottom: 12px; }
+.ledger-list { padding: 10px 14px; display: grid; gap: 9px; }
+.ledger-card { padding: 12px 13px; border: 1px solid #e2ddd1; border-radius: 10px; background: #fbfaf6; }
+.ledger-card.is-deprecated { border-style: dashed; background: #f5f3ec; }
+.ledger-card.is-deprecated strong { color: #8d887c; }
+.ledger-card-head { display: flex; align-items: center; gap: 7px; }
+.ledger-card-head strong { font-size: 14px; }
+.ledger-edition { margin-top: 6px; color: #4f5a52; font-size: 12px; font-weight: 600; }
+.ledger-excerpt { margin-top: 5px; color: #6f6a5e; font: 12px/1.8 "Songti SC", "STSong", serif; }
+.ledger-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px; }
+.ledger-card-foot small { color: #98927f; font-size: 9px; }
+.ledger-actions { display: flex; gap: 2px; white-space: nowrap; }
+
 .audit-layout { display: grid; grid-template-columns: minmax(560px, 1.15fr) minmax(380px, .85fr); gap: 12px; align-items: start; }
 .issue-list { padding: 9px; display: grid; gap: 7px; }
 .issue-row {
@@ -275,7 +304,8 @@ kbd { display: inline-grid; min-width: 21px; height: 21px; padding: 0 5px; place
   .source-panel { order: 2; }
   .meter-panel { order: 1; overflow-x: auto; }
   .inspector-panel { order: 3; grid-template-columns: 1fr; }
-  .audit-layout, .version-layout { grid-template-columns: 1fr; }
+  .audit-layout, .version-layout, .ledger-layout { grid-template-columns: 1fr; }
+  .ledger-form-panel { position: static; }
   .version-grid { grid-template-columns: repeat(2, 1fr); }
   .compare-toolbar { flex-wrap: wrap; }
 }

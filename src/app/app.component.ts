@@ -14,6 +14,7 @@ import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { METER_TEMPLATES, PoetryStoreService } from './services/poetry-store.service';
+import type { EvidenceEntry } from './models/poem.models';
 
 @Component({
   selector: 'app-root',
@@ -42,6 +43,10 @@ export class AppComponent {
   readonly templates = METER_TEMPLATES;
   readonly selectedCell = computed(() => this.store.selectedCell());
 
+  evidenceDraft = { title: '', edition: '', excerpt: '' };
+  editingEvidenceId: string | null = null;
+  pendingEvidenceId: string | null = null;
+
   get totalErrors(): number {
     return this.store.issues().filter((issue) => issue.level === 'error').length;
   }
@@ -66,6 +71,35 @@ export class AppComponent {
 
   updateVersionSource(source: string): void {
     this.store.updateVersionSource(source);
+  }
+
+  saveEvidence(): void {
+    if (!this.evidenceDraft.title.trim() || !this.evidenceDraft.edition.trim()) {
+      this.store.toast.set('请填写称谓与版本卷页');
+      return;
+    }
+    if (this.editingEvidenceId) {
+      this.store.updateEvidenceEntry(this.editingEvidenceId, this.evidenceDraft);
+    } else {
+      this.store.addEvidenceEntry(this.evidenceDraft);
+    }
+    this.resetEvidenceForm();
+  }
+
+  editEvidence(entry: EvidenceEntry): void {
+    this.editingEvidenceId = entry.id;
+    this.evidenceDraft = { title: entry.title, edition: entry.edition, excerpt: entry.excerpt };
+  }
+
+  resetEvidenceForm(): void {
+    this.editingEvidenceId = null;
+    this.evidenceDraft = { title: '', edition: '', excerpt: '' };
+  }
+
+  citePending(): void {
+    if (!this.pendingEvidenceId) return;
+    this.store.citeEvidence(this.pendingEvidenceId);
+    this.pendingEvidenceId = null;
   }
 
   trackTemplate(index: number, item: (typeof METER_TEMPLATES)[number]): string {

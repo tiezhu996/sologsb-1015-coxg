@@ -5,6 +5,9 @@ import type {
   AnalysisLine,
   CharacterMark,
   CharDiff,
+  EvidenceEntry,
+  EvidenceRef,
+  EvidenceSnapshot,
   MarkTone,
   MeterTemplate,
   PoemIssue,
@@ -69,7 +72,17 @@ function key(line: number, position: number): string {
 }
 
 function defaultMark(): CharacterMark {
-  return { tone: '?', rhyme: '', pauseAfter: false, basis: '', note: '' };
+  return { tone: '?', rhyme: '', pauseAfter: false, basis: '', note: '', evidenceRefs: [] };
+}
+
+function snapshotOf(entry: EvidenceEntry): EvidenceSnapshot {
+  return {
+    title: entry.title,
+    edition: entry.edition,
+    excerpt: entry.excerpt,
+    revision: entry.revision,
+    capturedAt: new Date().toISOString(),
+  };
 }
 
 function initialWorkspace(): PoemWorkspace {
@@ -105,12 +118,35 @@ function initialWorkspace(): PoemWorkspace {
     marks: clone(marks),
     antithesisPairs: [],
   };
+  const evidenceLedger: EvidenceEntry[] = [
+    {
+      id: 'evidence-pingshui',
+      title: '《平水韵》',
+      edition: '上声十七筱',
+      excerpt: '筱小皎皛杳窅嫋娆扰娆…晓鸟少…同部。',
+      status: 'active',
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'evidence-songke',
+      title: '宋蜀刻本《孟浩然集》',
+      edition: '卷一叶三',
+      excerpt: '「春眠不觉晓」句，宋刻作「不觉晓」，无别本异文。',
+      status: 'active',
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
   return {
     title: '春晓',
     author: '孟浩然',
     templateId: 'wuyan-zeqi',
     versions: [topVersion, variant],
     activeVersionId: topVersion.id,
+    evidenceLedger,
     updatedAt: now,
   };
 }
@@ -120,7 +156,14 @@ function loadWorkspace(): PoemWorkspace {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initialWorkspace();
     const parsed = JSON.parse(raw) as PoemWorkspace;
-    return parsed.versions?.length ? parsed : initialWorkspace();
+    if (!parsed.versions?.length) return initialWorkspace();
+    parsed.evidenceLedger ??= [];
+    parsed.versions.forEach((version) => {
+      Object.values(version.marks ?? {}).forEach((mark) => {
+        mark.evidenceRefs ??= [];
+      });
+    });
+    return parsed;
   } catch {
     return initialWorkspace();
   }
@@ -229,6 +272,27 @@ export class PoetryStoreService {
     if (version.antithesisPairs.length === 0) {
       issues.push({ id: 'antithesis-empty', level: 'info', title: '尚未标记对仗', detail: '可在检视器中把两句建立对仗关系。' });
     }
+    const ledger = this.workspace().evidenceLedger;
+    const stale = new Map<string, number>();
+    const deprecated = new Map<string, number>();
+    this.workspace().versions.forEach((item) => {
+      Object.values(item.marks).forEach((mark) => {
+        (mark.evidenceRefs ?? []).forEach((ref) => {
+          const entry = ledger.find((candidate) => candidate.id === ref.entryId);
+          if (!entry) return;
+          if (entry.status === 'deprecated') deprecated.set(entry.id, (deprecated.get(entry.id) ?? 0) + 1);
+          if (ref.confirmed && entry.revision > ref.snapshot.revision) stale.set(entry.id, (stale.get(entry.id) ?? 0) + 1);
+        });
+      });
+    });
+    deprecated.forEach((count, id) => {
+      const entry = ledger.find((candidate) => candidate.id === id);
+      issues.push({ id: `evidence-deprecated-${id}`, level: 'warning', title: '引用条目已停用', detail: `${entry?.title ?? '未知条目'}已停用，仍有 ${count} 处引用，原文快照仍可查。` });
+    });
+    stale.forEach((count, id) => {
+      const entry = ledger.find((candidate) => candidate.id === id);
+      issues.push({ id: `evidence-stale-${id}`, level: 'info', title: '台账条目已改版', detail: `${entry?.title ?? '未知条目'}已改至第 ${entry?.revision} 版，${count} 处已确认引用仍按引用时快照显示。` });
+    });
     if (!issues.some((issue) => issue.level === 'error')) {
       issues.unshift({ id: 'meter-ok', level: 'info', title: '格律检查通过', detail: '当前未发现硬性出律，请继续核对可接受变体。' });
     }
@@ -252,6 +316,56 @@ export class PoetryStoreService {
 
   readonly differences = computed(() => this.diff().filter((item) => item.changed).map((item) => item.index));
   readonly baselineVersion = computed(() => this.workspace().versions.find((version) => version.id === this.baselineVersionId()));
+
+  readonly evidenceUsage = computed(() => {
+    const usage = new Map<string, { total: number; confirmed: number }>();
+    this.workspace().versions.forEach((version) => {
+      Object.values(version.marks).forEach((mark) => {
+        (mark.evidenceRefs ?? []).forEach((ref) => {
+          const entry = usage.get(ref.entryId) ?? { total: 0, confirmed: 0 };
+          entry.total += 1;
+          if (ref.confirmed) entry.confirmed += 1;
+          usage.set(ref.entryId, entry);
+        });
+      });
+    });
+    return usage;
+  });
+
+  resolveEvidence(ref: EvidenceRef): {
+    title: string;
+    edition: string;
+    excerpt: string;
+    revision: number;
+    deprecated: boolean;
+    stale: boolean;
+    missing: boolean;
+    followsLive: boolean;
+  } {
+    const entry = this.workspace().evidenceLedger.find((item) => item.id === ref.entryId);
+    if (!entry) {
+      return { ...ref.snapshot, deprecated: false, stale: false, missing: true, followsLive: false };
+    }
+    if (!ref.confirmed) {
+      return {
+        title: entry.title,
+        edition: entry.edition,
+        excerpt: entry.excerpt,
+        revision: entry.revision,
+        deprecated: entry.status === 'deprecated',
+        stale: false,
+        missing: false,
+        followsLive: true,
+      };
+    }
+    return {
+      ...ref.snapshot,
+      deprecated: entry.status === 'deprecated',
+      stale: entry.revision > ref.snapshot.revision,
+      missing: false,
+      followsLive: false,
+    };
+  }
 
   selectVersion(id: string): void {
     this.workspace.update((workspace) => ({ ...workspace, activeVersionId: id }));
@@ -337,6 +451,92 @@ export class PoetryStoreService {
     });
   }
 
+  addEvidenceEntry(input: { title: string; edition: string; excerpt: string }): void {
+    const now = new Date().toISOString();
+    this.commit((workspace) => {
+      workspace.evidenceLedger.push({
+        id: uid('evidence'),
+        title: input.title.trim(),
+        edition: input.edition.trim(),
+        excerpt: input.excerpt.trim(),
+        status: 'active',
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    this.toast.set('已登记依据条目');
+  }
+
+  updateEvidenceEntry(id: string, patch: { title?: string; edition?: string; excerpt?: string }): void {
+    this.commit((workspace) => {
+      const entry = workspace.evidenceLedger.find((item) => item.id === id);
+      if (!entry) return;
+      if (patch.title !== undefined) entry.title = patch.title.trim();
+      if (patch.edition !== undefined) entry.edition = patch.edition.trim();
+      if (patch.excerpt !== undefined) entry.excerpt = patch.excerpt.trim();
+      entry.revision += 1;
+      entry.updatedAt = new Date().toISOString();
+    });
+    this.toast.set('条目已改版，已确认引用仍以各自快照为准');
+  }
+
+  toggleEvidenceStatus(id: string): void {
+    this.commit((workspace) => {
+      const entry = workspace.evidenceLedger.find((item) => item.id === id);
+      if (!entry) return;
+      entry.status = entry.status === 'active' ? 'deprecated' : 'active';
+      entry.updatedAt = new Date().toISOString();
+    });
+  }
+
+  citeEvidence(entryId: string): void {
+    const entry = this.workspace().evidenceLedger.find((item) => item.id === entryId);
+    if (!entry) return;
+    if (entry.status === 'deprecated') {
+      this.toast.set('该条目已停用，不能再新引用');
+      return;
+    }
+    const cell = this.selectedCell();
+    if (!cell) return;
+    if ((cell.mark.evidenceRefs ?? []).some((ref) => ref.entryId === entryId)) {
+      this.toast.set('此字格已引用该条目');
+      return;
+    }
+    this.commit((workspace) => {
+      const version = this.versionIn(workspace);
+      const id = key(this.selectedLine(), this.selectedPosition());
+      const mark = { ...defaultMark(), ...version.marks[id] };
+      mark.evidenceRefs = [...(mark.evidenceRefs ?? []), { entryId, confirmed: false, snapshot: snapshotOf(entry), citedAt: new Date().toISOString() }];
+      version.marks[id] = mark;
+    });
+  }
+
+  confirmEvidence(entryId: string): void {
+    const entry = this.workspace().evidenceLedger.find((item) => item.id === entryId);
+    if (!entry) return;
+    this.commit((workspace) => {
+      const version = this.versionIn(workspace);
+      const id = key(this.selectedLine(), this.selectedPosition());
+      const mark = version.marks[id];
+      const ref = mark?.evidenceRefs?.find((item) => item.entryId === entryId);
+      if (!ref || ref.confirmed) return;
+      ref.confirmed = true;
+      ref.snapshot = snapshotOf(entry);
+    });
+    this.toast.set('已确认引用，此后以快照为准');
+  }
+
+  removeEvidence(entryId: string): void {
+    this.commit((workspace) => {
+      const version = this.versionIn(workspace);
+      const id = key(this.selectedLine(), this.selectedPosition());
+      const mark = version.marks[id];
+      if (!mark?.evidenceRefs) return;
+      mark.evidenceRefs = mark.evidenceRefs.filter((ref) => ref.entryId !== entryId);
+    });
+  }
+
   snapshot(): void {
     const active = clone(this.activeVersion());
     active.id = uid('version');
@@ -395,7 +595,36 @@ export class PoetryStoreService {
       return `第 ${line.index + 1} 句：${tags}`;
     });
     const notes = this.issues().map((issue) => `[${issue.level.toUpperCase()}] ${issue.title}：${issue.detail}`);
-    return [`# ${this.workspace().title} · 格律校对稿`, '', `底本：${active.name}`, `出处：${active.source}`, '', '## 字音标注', ...lines, '', '## 检查记录', ...notes].join('\n');
+    const ledger = this.workspace().evidenceLedger;
+    const basisLines: string[] = [];
+    this.analysis().forEach((line) => {
+      line.cells.forEach((cell) => {
+        const refs = cell.mark.evidenceRefs ?? [];
+        if (!cell.mark.basis && !refs.length) return;
+        basisLines.push(`### 第 ${line.index + 1} 句第 ${cell.position + 1} 字「${cell.char}」`);
+        if (cell.mark.basis) basisLines.push(`- 手写依据：${cell.mark.basis}`);
+        refs.forEach((ref) => {
+          const entry = ledger.find((item) => item.id === ref.entryId);
+          const current = entry
+            ? `${entry.title}｜${entry.edition}｜第 ${entry.revision} 版｜${entry.status === 'deprecated' ? '已停用' : '在用'}`
+            : '台账条目已不存在';
+          basisLines.push(`- 当前关联：${current}`);
+          basisLines.push(`- 引用时快照：${ref.snapshot.title}｜${ref.snapshot.edition}｜第 ${ref.snapshot.revision} 版｜${ref.confirmed ? '已确认' : '未确认'}｜摘录：${ref.snapshot.excerpt}`);
+        });
+      });
+    });
+    if (!basisLines.length) basisLines.push('（暂无逐字依据记录）');
+    const ledgerLines = ledger.length
+      ? ledger.map((entry) => `- ${entry.title}｜${entry.edition}｜第 ${entry.revision} 版｜${entry.status === 'deprecated' ? '已停用' : '在用'}｜摘录：${entry.excerpt}`)
+      : ['（台账为空）'];
+    return [
+      `# ${this.workspace().title} · 格律校对稿`, '',
+      `底本：${active.name}`, `出处：${active.source}`, '',
+      '## 字音标注', ...lines, '',
+      '## 逐字依据', ...basisLines, '',
+      '## 依据台账', ...ledgerLines, '',
+      '## 检查记录', ...notes,
+    ].join('\n');
   }
 
   downloadProofreadCopy(): void {
