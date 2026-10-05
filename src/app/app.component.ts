@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, HostListener, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NzAlertModule } from 'ng-zorro-antd/alert';
@@ -13,6 +13,7 @@ import { NzSwitchModule } from 'ng-zorro-antd/switch';
 import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import type { EvidenceEntry } from './models/poem.models';
 import { METER_TEMPLATES, PoetryStoreService } from './services/poetry-store.service';
 
 @Component({
@@ -42,6 +43,13 @@ export class AppComponent {
   readonly templates = METER_TEMPLATES;
   readonly selectedCell = computed(() => this.store.selectedCell());
 
+  /** 台账新条目表单 */
+  evidenceDraft = { title: '', edition: '', excerpt: '' };
+  /** 正在改版的条目 id；空串表示未在编辑 */
+  readonly editingEvidenceId = signal('');
+  /** 改版表单 */
+  evidenceEditDraft = { title: '', edition: '', excerpt: '' };
+
   get totalErrors(): number {
     return this.store.issues().filter((issue) => issue.level === 'error').length;
   }
@@ -66,6 +74,28 @@ export class AppComponent {
 
   updateVersionSource(source: string): void {
     this.store.updateVersionSource(source);
+  }
+
+  addEvidence(): void {
+    if (!this.evidenceDraft.title.trim()) return;
+    this.store.addEvidenceEntry(this.evidenceDraft);
+    this.evidenceDraft = { title: '', edition: '', excerpt: '' };
+  }
+
+  startEvidenceEdit(entry: EvidenceEntry): void {
+    this.editingEvidenceId.set(entry.id);
+    this.evidenceEditDraft = { title: entry.title, edition: entry.edition, excerpt: entry.excerpt };
+  }
+
+  saveEvidenceEdit(): void {
+    const id = this.editingEvidenceId();
+    if (!id) return;
+    this.store.updateEvidenceEntry(id, this.evidenceEditDraft);
+    this.editingEvidenceId.set('');
+  }
+
+  cancelEvidenceEdit(): void {
+    this.editingEvidenceId.set('');
   }
 
   trackTemplate(index: number, item: (typeof METER_TEMPLATES)[number]): string {

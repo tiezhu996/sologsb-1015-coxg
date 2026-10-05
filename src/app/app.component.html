@@ -160,7 +160,7 @@
             </div>
             <label class="field-label">韵组</label>
             <input nz-input placeholder="如 A、下平八庚" [ngModel]="cell.mark.rhyme" (ngModelChange)="store.setMark({ rhyme: $event })" />
-            <label class="field-label">判断依据</label>
+            <label class="field-label">判断依据（手写原文）</label>
             <textarea
               nz-input
               rows="3"
@@ -168,6 +168,50 @@
               [ngModel]="cell.mark.basis"
               (ngModelChange)="updateSource($event)"
             ></textarea>
+            <label class="field-label">台账引用</label>
+            @if (cell.mark.basisRef; as ref) {
+              <div class="evidence-ref-card" [class.is-draft]="!ref.confirmed">
+                <div class="ref-head">
+                  <strong>{{ ref.title }}</strong>
+                  <nz-tag [nzColor]="ref.confirmed ? 'green' : 'gold'">{{ ref.confirmed ? '已确认 · 快照锁定' : '未确认 · 跟随台账' }}</nz-tag>
+                </div>
+                <p class="ref-edition">{{ ref.edition || '卷页未录' }}</p>
+                @if (ref.excerpt) { <p class="ref-excerpt">{{ ref.excerpt }}</p> }
+                <small>引用时快照 · 第 {{ ref.revision }} 版 · {{ ref.referencedAt | date: 'yyyy-MM-dd HH:mm' }}</small>
+                @if (store.evidenceEntry(ref.entryId); as entry) {
+                  <div class="ref-flags">
+                    @if (entry.status === 'disabled') {
+                      <nz-tag nzColor="warning">台账条目已停用 · 引用仍可查</nz-tag>
+                    }
+                    @if (ref.confirmed && entry.revision !== ref.revision) {
+                      <nz-tag nzColor="processing">台账已改版至第 {{ entry.revision }} 版 · 此格保持快照</nz-tag>
+                    }
+                  </div>
+                }
+                <div class="ref-actions">
+                  @if (!ref.confirmed) {
+                    <button nz-button nzType="primary" nzSize="small" (click)="store.confirmEvidenceReference()">确认引用</button>
+                  }
+                  <button nz-button nzSize="small" nzDanger (click)="store.removeEvidenceReference()">取消引用</button>
+                </div>
+              </div>
+            } @else {
+              <nz-select
+                class="evidence-select"
+                nzPlaceHolder="从依据台账选择条目"
+                [ngModel]="null"
+                (ngModelChange)="store.referenceEvidence($event)"
+              >
+                @for (entry of store.evidenceLedger(); track entry.id) {
+                  @if (entry.status === 'active') {
+                    <nz-option [nzValue]="entry.id" [nzLabel]="entry.title + ' · ' + (entry.edition || '卷页未录')"></nz-option>
+                  }
+                }
+              </nz-select>
+              @if (!store.evidenceLedger().length) {
+                <p class="ref-hint">台账为空，请先在「依据台账」页登记条目。</p>
+              }
+            }
             <label class="field-label">批注</label>
             <textarea
               nz-input
@@ -230,6 +274,68 @@
             }
           </div>
         </section>
+      </div>
+    </nz-tab>
+
+    <nz-tab nzTitle="依据台账">
+      <div class="ledger-layout">
+        <section class="surface ledger-panel">
+          <div class="section-title">
+            <div><span class="overline">EVIDENCE LEDGER</span><h2>依据台账</h2></div>
+            <nz-tag nzColor="processing">{{ store.evidenceLedger().length }} 条</nz-tag>
+          </div>
+          @if (store.evidenceLedger().length === 0) {
+            <nz-empty nzNotFoundContent="尚未登记依据条目"></nz-empty>
+          }
+          <div class="ledger-list">
+            @for (entry of store.evidenceLedger(); track entry.id) {
+              <article class="ledger-card" [class.is-disabled]="entry.status === 'disabled'">
+                <div class="ledger-head">
+                  <strong>{{ entry.title }}</strong>
+                  <nz-tag [nzColor]="entry.status === 'active' ? 'green' : 'default'">{{ entry.status === 'active' ? '启用中' : '已停用' }}</nz-tag>
+                  <nz-tag nzColor="blue">第 {{ entry.revision }} 版</nz-tag>
+                  <nz-tag>{{ store.evidenceUsage().get(entry.id) ?? 0 }} 处引用</nz-tag>
+                </div>
+                @if (editingEvidenceId() === entry.id) {
+                  <label class="field-label">称谓</label>
+                  <input nz-input [(ngModel)]="evidenceEditDraft.title" />
+                  <label class="field-label">版本卷页</label>
+                  <input nz-input placeholder="如 宋蜀刻本 · 卷一 · 叶三" [(ngModel)]="evidenceEditDraft.edition" />
+                  <label class="field-label">摘录</label>
+                  <textarea nz-input rows="3" [(ngModel)]="evidenceEditDraft.excerpt"></textarea>
+                  <p class="ledger-hint">保存即改版：已确认的字格引用保持引用时快照，未确认的引用跟随新版本。</p>
+                  <div class="ledger-actions">
+                    <button nz-button nzType="primary" nzSize="small" (click)="saveEvidenceEdit()">保存改版</button>
+                    <button nz-button nzSize="small" (click)="cancelEvidenceEdit()">取消</button>
+                  </div>
+                } @else {
+                  <p class="ledger-edition">{{ entry.edition || '卷页未录' }}</p>
+                  @if (entry.excerpt) { <p class="ledger-excerpt">{{ entry.excerpt }}</p> }
+                  <small class="ledger-meta">更新于 {{ entry.updatedAt | date: 'yyyy-MM-dd HH:mm' }}</small>
+                  <div class="ledger-actions">
+                    <button nz-button nzSize="small" (click)="startEvidenceEdit(entry)">改版</button>
+                    <button nz-button nzSize="small" [nzDanger]="entry.status === 'active'" (click)="store.toggleEvidenceStatus(entry.id)">
+                      {{ entry.status === 'active' ? '停用' : '重新启用' }}
+                    </button>
+                  </div>
+                }
+              </article>
+            }
+          </div>
+        </section>
+        <aside class="surface ledger-form">
+          <span class="overline">NEW EVIDENCE</span>
+          <h2>登记依据条目</h2>
+          <label class="field-label">称谓</label>
+          <input nz-input placeholder="如 《平水韵》" [(ngModel)]="evidenceDraft.title" />
+          <label class="field-label">版本卷页</label>
+          <input nz-input placeholder="如 上声 · 十七筱" [(ngModel)]="evidenceDraft.edition" />
+          <label class="field-label">摘录</label>
+          <textarea nz-input rows="4" placeholder="摘录韵书或刻本原文" [(ngModel)]="evidenceDraft.excerpt"></textarea>
+          <button nz-button nzType="primary" nzBlock [disabled]="!evidenceDraft.title.trim()" (click)="addEvidence()">登记入台账</button>
+          <nz-divider></nz-divider>
+          <p class="ledger-hint">字格从台账引用依据：新引用未确认时跟随条目当前版本，确认后锁定引用时快照；条目停用后已有引用仍可查，导出同时写当前关联与当时快照。手写判断依据始终保留原文。</p>
+        </aside>
       </div>
     </nz-tab>
 
@@ -304,7 +410,7 @@
         <aside class="surface export-panel">
           <span class="overline">PROOFREAD EXPORT</span>
           <h2>导出校对稿</h2>
-          <p>包含逐字平仄、韵组、判断依据、出律提示与对仗记录。</p>
+          <p>包含逐字平仄、韵组、判断依据、出律提示与对仗记录；台账引用同时写出当前关联与引用时快照。</p>
           <button nz-button nzType="primary" nzSize="large" nzBlock (click)="store.downloadProofreadCopy()">导出 Markdown 校对稿</button>
           <nz-divider></nz-divider>
           <label class="field-label">当前底本说明</label>

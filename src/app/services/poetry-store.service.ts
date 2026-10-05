@@ -5,6 +5,8 @@ import type {
   AnalysisLine,
   CharacterMark,
   CharDiff,
+  EvidenceEntry,
+  EvidenceRef,
   MarkTone,
   MeterTemplate,
   PoemIssue,
@@ -69,22 +71,68 @@ function key(line: number, position: number): string {
 }
 
 function defaultMark(): CharacterMark {
-  return { tone: '?', rhyme: '', pauseAfter: false, basis: '', note: '' };
+  return { tone: '?', rhyme: '', pauseAfter: false, basis: '', basisRef: null, note: '' };
+}
+
+function snapshotOf(entry: EvidenceEntry, confirmed: boolean): EvidenceRef {
+  return {
+    entryId: entry.id,
+    confirmed,
+    revision: entry.revision,
+    title: entry.title,
+    edition: entry.edition,
+    excerpt: entry.excerpt,
+    referencedAt: new Date().toISOString(),
+  };
+}
+
+function initialLedger(now: string): EvidenceEntry[] {
+  return [
+    {
+      id: 'evidence-pingshui-xiao',
+      title: '《平水韵》',
+      edition: '上声 · 十七筱',
+      excerpt: '筱，小也。晓、鸟、少、杳、窕、皎之属皆从筱韵。',
+      revision: 1,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'evidence-songke-ben',
+      title: '宋蜀刻本《孟浩然集》',
+      edition: '卷一 · 五言绝句 · 叶三',
+      excerpt: '春眠不觉晓，处处闻啼鸟。夜来风雨声，花落知多少。',
+      revision: 1,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
 }
 
 function initialWorkspace(): PoemWorkspace {
   const now = new Date().toISOString();
   const spring = '春眠不觉晓，\n处处闻啼鸟。\n夜来风雨声，\n花落知多少。';
+  const ledger = initialLedger(now);
+  const rhymeRef = snapshotOf(ledger[0], true);
   const marks: Record<string, CharacterMark> = {};
   const cells = [
     ['晓', 0, '平', false], ['鸟', 1, '平', false], ['声', 2, '平', false], ['少', 3, '平', false],
   ] as const;
   cells.forEach(([char, line, tone, pause]) => {
-    marks[key(line, 4)] = { tone, rhyme: 'A', pauseAfter: pause, basis: '《平水韵》上声十七筱', note: `${char} 为韵脚` };
+    marks[key(line, 4)] = {
+      tone,
+      rhyme: 'A',
+      pauseAfter: pause,
+      basis: '《平水韵》上声十七筱',
+      basisRef: { ...rhymeRef },
+      note: `${char} 为韵脚`,
+    };
   });
-  marks[key(0, 2)] = { tone: '平', rhyme: '', pauseAfter: false, basis: '平水韵', note: '句中平声' };
-  marks[key(1, 2)] = { tone: '平', rhyme: '', pauseAfter: false, basis: '平水韵', note: '' };
-  marks[key(2, 2)] = { tone: '平', rhyme: '', pauseAfter: false, basis: '平水韵', note: '' };
+  marks[key(0, 2)] = { tone: '平', rhyme: '', pauseAfter: false, basis: '平水韵', basisRef: null, note: '句中平声' };
+  marks[key(1, 2)] = { tone: '平', rhyme: '', pauseAfter: false, basis: '平水韵', basisRef: null, note: '' };
+  marks[key(2, 2)] = { tone: '平', rhyme: '', pauseAfter: false, basis: '平水韵', basisRef: null, note: '' };
 
   const variants = spring.replace('处处闻啼鸟', '处处闻啼鸟');
   const topVersion: PoemVersion = {
@@ -111,6 +159,7 @@ function initialWorkspace(): PoemWorkspace {
     templateId: 'wuyan-zeqi',
     versions: [topVersion, variant],
     activeVersionId: topVersion.id,
+    evidenceLedger: ledger,
     updatedAt: now,
   };
 }
@@ -120,7 +169,9 @@ function loadWorkspace(): PoemWorkspace {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initialWorkspace();
     const parsed = JSON.parse(raw) as PoemWorkspace;
-    return parsed.versions?.length ? parsed : initialWorkspace();
+    if (!parsed.versions?.length) return initialWorkspace();
+    // 旧稿没有台账字段时补空台账，手写依据原样保留
+    return { ...parsed, evidenceLedger: Array.isArray(parsed.evidenceLedger) ? parsed.evidenceLedger : [] };
   } catch {
     return initialWorkspace();
   }
@@ -253,6 +304,20 @@ export class PoetryStoreService {
   readonly differences = computed(() => this.diff().filter((item) => item.changed).map((item) => item.index));
   readonly baselineVersion = computed(() => this.workspace().versions.find((version) => version.id === this.baselineVersionId()));
 
+  readonly evidenceLedger = computed(() => this.workspace().evidenceLedger);
+
+  /** 各台账条目在所有版本字格中的引用计数 */
+  readonly evidenceUsage = computed(() => {
+    const usage = new Map<string, number>();
+    this.workspace().versions.forEach((version) => {
+      Object.values(version.marks).forEach((mark) => {
+        const ref = mark?.basisRef;
+        if (ref) usage.set(ref.entryId, (usage.get(ref.entryId) ?? 0) + 1);
+      });
+    });
+    return usage;
+  });
+
   selectVersion(id: string): void {
     this.workspace.update((workspace) => ({ ...workspace, activeVersionId: id }));
   }
@@ -337,6 +402,115 @@ export class PoetryStoreService {
     });
   }
 
+  evidenceEntry(id: string): EvidenceEntry | undefined {
+    return this.workspace().evidenceLedger.find((entry) => entry.id === id);
+  }
+
+  addEvidenceEntry(input: { title: string; edition: string; excerpt: string }): void {
+    const title = input.title.trim();
+    if (!title) return;
+    const now = new Date().toISOString();
+    this.commit((workspace) => {
+      workspace.evidenceLedger.unshift({
+        id: uid('evidence'),
+        title,
+        edition: input.edition.trim(),
+        excerpt: input.excerpt.trim(),
+        revision: 1,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    this.toast.set('已登记依据条目');
+  }
+
+  /** 条目改版：已确认引用保持引用时快照，未确认引用跟随新版本 */
+  updateEvidenceEntry(id: string, patch: { title: string; edition: string; excerpt: string }): void {
+    let changed = false;
+    this.commit((workspace) => {
+      const entry = workspace.evidenceLedger.find((item) => item.id === id);
+      if (!entry) return;
+      entry.title = patch.title.trim() || entry.title;
+      entry.edition = patch.edition.trim();
+      entry.excerpt = patch.excerpt.trim();
+      entry.revision += 1;
+      entry.updatedAt = new Date().toISOString();
+      workspace.versions.forEach((version) => {
+        Object.values(version.marks).forEach((mark) => {
+          const ref = mark?.basisRef;
+          if (ref && ref.entryId === id && !ref.confirmed) {
+            ref.title = entry.title;
+            ref.edition = entry.edition;
+            ref.excerpt = entry.excerpt;
+            ref.revision = entry.revision;
+          }
+        });
+      });
+      changed = true;
+    });
+    if (changed) this.toast.set('条目已改版：未确认引用已跟随，已确认引用保持快照');
+  }
+
+  /** 停用不删除，已有引用仍可查；可重新启用 */
+  toggleEvidenceStatus(id: string): void {
+    let disabled = false;
+    this.commit((workspace) => {
+      const entry = workspace.evidenceLedger.find((item) => item.id === id);
+      if (!entry) return;
+      entry.status = entry.status === 'active' ? 'disabled' : 'active';
+      entry.updatedAt = new Date().toISOString();
+      disabled = entry.status === 'disabled';
+    });
+    this.toast.set(disabled ? '条目已停用，已有引用仍可查' : '条目已重新启用');
+  }
+
+  /** 为当前字格建立台账引用；新引用未确认，跟随台账当前版本 */
+  referenceEvidence(entryId: string): void {
+    const entry = this.evidenceEntry(entryId);
+    if (!entry) return;
+    if (entry.status !== 'active') {
+      this.toast.set('该条目已停用，不能新增引用');
+      return;
+    }
+    this.commit((workspace) => {
+      const version = this.versionIn(workspace);
+      const id = key(this.selectedLine(), this.selectedPosition());
+      const mark: CharacterMark = { ...defaultMark(), ...version.marks[id] };
+      mark.basisRef = snapshotOf(entry, false);
+      version.marks[id] = mark;
+    });
+    this.toast.set('已引用台账条目，确认后锁定快照');
+  }
+
+  /** 确认当前字格的引用：快照同步到台账当前版本后冻结 */
+  confirmEvidenceReference(): void {
+    this.commit((workspace) => {
+      const version = this.versionIn(workspace);
+      const mark = version.marks[key(this.selectedLine(), this.selectedPosition())];
+      const ref = mark?.basisRef;
+      if (!ref) return;
+      const entry = workspace.evidenceLedger.find((item) => item.id === ref.entryId);
+      if (entry) {
+        ref.title = entry.title;
+        ref.edition = entry.edition;
+        ref.excerpt = entry.excerpt;
+        ref.revision = entry.revision;
+      }
+      ref.confirmed = true;
+      ref.referencedAt = new Date().toISOString();
+    });
+  }
+
+  /** 取消当前字格的台账引用，手写依据不受影响 */
+  removeEvidenceReference(): void {
+    this.commit((workspace) => {
+      const version = this.versionIn(workspace);
+      const mark = version.marks[key(this.selectedLine(), this.selectedPosition())];
+      if (mark) mark.basisRef = null;
+    });
+  }
+
   snapshot(): void {
     const active = clone(this.activeVersion());
     active.id = uid('version');
@@ -395,7 +569,34 @@ export class PoetryStoreService {
       return `第 ${line.index + 1} 句：${tags}`;
     });
     const notes = this.issues().map((issue) => `[${issue.level.toUpperCase()}] ${issue.title}：${issue.detail}`);
-    return [`# ${this.workspace().title} · 格律校对稿`, '', `底本：${active.name}`, `出处：${active.source}`, '', '## 字音标注', ...lines, '', '## 检查记录', ...notes].join('\n');
+    const usage = this.evidenceUsage();
+    const ledgerLines = this.evidenceLedger().map((entry) => {
+      const status = entry.status === 'active' ? '启用中' : '已停用';
+      const excerpt = entry.excerpt ? `\n  摘录：${entry.excerpt}` : '';
+      return `- ${entry.title} · ${entry.edition || '卷页未录'}（第 ${entry.revision} 版 · ${status} · ${usage.get(entry.id) ?? 0} 处引用）${excerpt}`;
+    });
+    const refLines: string[] = [];
+    this.analysis().forEach((line) => {
+      line.cells.forEach((cell) => {
+        const ref = cell.mark.basisRef;
+        if (!ref) return;
+        const entry = this.evidenceEntry(ref.entryId);
+        const current = entry
+          ? `${entry.title} · ${entry.edition || '卷页未录'}（第 ${entry.revision} 版${entry.status === 'disabled' ? ' · 已停用' : ''}）`
+          : '台账条目已缺失';
+        const snapshot = `${ref.title} · ${ref.edition || '卷页未录'}（第 ${ref.revision} 版 · ${ref.confirmed ? '已确认' : '未确认'}）`;
+        refLines.push(`- 第 ${line.index + 1} 句「${cell.char}」`, `  - 当前关联：${current}`, `  - 当时快照：${snapshot}`);
+        if (cell.mark.basis) refLines.push(`  - 手写依据：${cell.mark.basis}`);
+      });
+    });
+    return [
+      `# ${this.workspace().title} · 格律校对稿`, '',
+      `底本：${active.name}`, `出处：${active.source}`, '',
+      '## 字音标注', ...lines, '',
+      '## 依据台账', ...(ledgerLines.length ? ledgerLines : ['（台账为空）']), '',
+      '## 字格依据引用', ...(refLines.length ? refLines : ['（尚未引用台账）']), '',
+      '## 检查记录', ...notes,
+    ].join('\n');
   }
 
   downloadProofreadCopy(): void {
